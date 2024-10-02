@@ -27,9 +27,14 @@ pub trait State<OrderKey: Ord>: Clone {
     fn apply(&mut self, event: &Self::Event);
 }
 
+pub trait LagBuffer<S: State<O>, O: Ord = usize> {
+    fn update(&mut self, event: S::Event);
+    fn state(&self) -> &S;
+}
+
 /// A buffer system designed to handle out-of-order events and reconcile the state.
 ///
-/// The `LagBuffer` is a generic structure that manages the application of events to a state,
+/// The `DoubleBufferedLagBuffer` is a generic structure that manages the application of events to a state,
 /// ensuring that events are applied in the correct order even if they arrive out of sequence.
 /// This is particularly useful in scenarios like networked applications or games, where events
 /// may not arrive in the order they were generated due to latency or other network issues.
@@ -39,7 +44,7 @@ pub trait State<OrderKey: Ord>: Clone {
 /// - **Active Buffer**: The primary buffer where events are stored and applied to the current state.
 /// - **Secondary Buffer**: Used to assist in state reconstruction and prepare for buffer swaps.
 ///
-/// The key features of `LagBuffer` include:
+/// The key features of `DoubleBufferedLagBuffer` include:
 ///
 /// - **Event Ordering**: Ensures that events are applied in the correct order based on their `OrderKey`.
 /// - **State Reconstruction**: Reconstructs the state efficiently when out-of-order events are received.
@@ -61,7 +66,7 @@ pub trait State<OrderKey: Ord>: Clone {
 /// # Examples
 ///
 /// ```rust
-/// use lagbuffer::{LagBuffer, State, Event}; // Replace `your_crate` with the actual crate name.
+/// use lagbuffer::{DoubleBufferedLagBuffer, State, Event}; // Replace `your_crate` with the actual crate name.
 ///
 /// #[derive(Clone, Debug)]
 /// struct MyState {
@@ -110,7 +115,7 @@ pub trait State<OrderKey: Ord>: Clone {
 /// }
 ///
 /// let initial_state = MyState::new();
-/// let mut lag_buffer = LagBuffer::<MyState, 4>::new(initial_state);
+/// let mut lag_buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(initial_state);
 ///
 /// // Create some events
 /// let event1 = MyEvent {
@@ -141,15 +146,17 @@ pub trait State<OrderKey: Ord>: Clone {
 /// let state = lag_buffer.state();
 /// assert_eq!(state.data, vec![10, 20, 30]); // Should print [10, 20, 30]
 /// ```
-pub struct LagBuffer<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord = usize> {
-    current_state: S,
-    active_buffer: usize,
-    buffer_bases: [S; 2],
-    buffers: [Vec<S::Event>; 2],
+pub struct DoubleBufferedLagBuffer<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord = usize> {
+    pub(crate) current_state: S,
+    pub(crate) active_buffer: usize,
+    pub(crate) buffer_bases: [S; 2],
+    pub(crate) buffers: [Vec<S::Event>; 2],
 }
 
-impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, SIZE, OrderKey> {
-    /// Creates a new `LagBuffer` with the given initial state.
+impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord>
+    DoubleBufferedLagBuffer<S, SIZE, OrderKey>
+{
+    /// Creates a new `DoubleBufferedLagBuffer` with the given initial state.
     ///
     /// # Arguments
     ///
@@ -157,7 +164,7 @@ impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, SIZE, Or
     ///
     /// # Returns
     ///
-    /// A new `LagBuffer` instance initialized with the provided state.
+    /// A new `DoubleBufferedLagBuffer` instance initialized with the provided state.
     pub fn new(initial_state: S) -> Self {
         Self {
             buffers: [Vec::with_capacity(SIZE), Vec::with_capacity(SIZE)],
@@ -211,13 +218,17 @@ impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, SIZE, Or
 
         if in_order {
             // In-order event: apply directly and add to active buffer
-            self.current_state.apply(&event);
             self.buffers[active_buffer].push(event.clone());
 
             // If buffer is more than half full, start populating the secondary buffer
             if self.buffers[active_buffer].len() > (SIZE / 2) {
-                self.buffers[secondary_buffer].push(event);
+                if self.buffers[secondary_buffer].is_empty() {
+                    self.buffer_bases[secondary_buffer] = self.current_state.clone();
+                }
+                self.buffers[secondary_buffer].push(event.clone());
             }
+
+            self.current_state.apply(&event);
         } else {
             // Out-of-order event: insert into active buffer and reconstruct state
             let insert_position = self.buffers[active_buffer]
@@ -276,6 +287,18 @@ impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, SIZE, Or
     }
 }
 
+impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, OrderKey>
+    for DoubleBufferedLagBuffer<S, SIZE, OrderKey>
+{
+    fn update(&mut self, event: S::Event) {
+        (self as &mut DoubleBufferedLagBuffer<S, SIZE, OrderKey>).update(event);
+    }
+
+    fn state(&self) -> &S {
+        (self as &DoubleBufferedLagBuffer<S, SIZE, OrderKey>).state()
+    }
+}
+
 // Testing section.
 
 #[cfg(test)]
@@ -331,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_event_application_in_order() {
-        let mut buffer = LagBuffer::<MyState, 4>::new(MyState::new());
+        let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
 
         // Apply 4 insert events in order.
         buffer.update(MyEvent {
@@ -373,8 +396,56 @@ mod tests {
     }
 
     #[test]
+    fn test_same_state() {
+        let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
+
+        // Apply 4 insert events in order.
+        buffer.update(MyEvent {
+            id: 1,
+            value: 10,
+            target: 0,
+            action: Action::Insert,
+        });
+        buffer.update(MyEvent {
+            id: 2,
+            value: 20,
+            target: 0,
+            action: Action::Insert,
+        });
+        buffer.update(MyEvent {
+            id: 3,
+            value: 30,
+            target: 0,
+            action: Action::Insert,
+        });
+        buffer.update(MyEvent {
+            id: 4,
+            value: 40,
+            target: 0,
+            action: Action::Insert,
+        });
+        buffer.update(MyEvent {
+            id: 5,
+            value: 50,
+            target: 0,
+            action: Action::Insert,
+        });
+
+        let mut first = dbg!(buffer.buffer_bases[0].clone());
+        for event in &buffer.buffers[0] {
+            first.apply(event);
+        }
+
+        let mut second = dbg!(buffer.buffer_bases[1].clone());
+        for event in &buffer.buffers[1] {
+            second.apply(event);
+        }
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn test_event_application_out_of_order() {
-        let mut buffer = LagBuffer::<MyState, 4>::new(MyState::new());
+        let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
 
         // Apply some insert events.
         buffer.update(MyEvent {
@@ -402,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_buffer_has_half_after_swap() {
-        let mut buffer = LagBuffer::<MyState, 4>::new(MyState::new());
+        let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
 
         // Apply 5 events to trigger buffer swap.
         buffer.update(MyEvent {
@@ -442,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_replace_action() {
-        let mut buffer = LagBuffer::<MyState, 4>::new(MyState::new());
+        let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
 
         // Apply insert events.
         buffer.update(MyEvent {

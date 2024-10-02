@@ -1,4 +1,4 @@
-use lagbuffer::{Event, LagBuffer, State};
+use lagbuffer::{DoubleBufferedLagBuffer, Event, State};
 
 #[derive(Clone, Debug, PartialEq)]
 struct MyState {
@@ -48,7 +48,7 @@ impl Event<usize> for MyEvent {
 
 fn main() {
     // Example usage in a real program
-    let mut buffer = LagBuffer::<MyState, 4>::new(MyState::new());
+    let mut buffer = DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new());
 
     buffer.update(MyEvent {
         id: 1,
