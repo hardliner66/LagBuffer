@@ -1,6 +1,6 @@
 [package]
 name = "lagbuffer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "**LagBuffer** is a Rust crate designed to handle out-of-order events and reconcile state efficiently. It is particularly useful in scenarios such as game development or networked applications, where events may arrive out of sequence due to network latency or other factors."
 license-file = "LICENSE"
