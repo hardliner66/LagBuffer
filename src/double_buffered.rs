@@ -111,7 +111,7 @@ use crate::{Event, State};
 /// lag_buffer.update(event2);
 ///
 /// // Access the current state.
-/// let state = lag_buffer.state();
+/// let state = lag_buffer.state_ref();
 /// assert_eq!(state.data, vec![10, 20, 30]); // Should print [10, 20, 30]
 /// ```
 pub struct DoubleBufferedLagBuffer<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord = usize> {
@@ -203,7 +203,7 @@ impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord>
                 .binary_search_by_key(&event.get_order_key(), S::Event::get_order_key)
                 .unwrap_or_else(|e| e);
 
-            self.buffers[active_buffer].insert(insert_position, event.clone());
+            self.buffers[active_buffer].insert(dbg!(insert_position), event.clone());
 
             // Reconstruct current state from buffer base and events
             self.current_state = self.buffer_bases[active_buffer].clone();
@@ -239,7 +239,7 @@ impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord>
     /// # Returns
     ///
     /// A reference to the current state after applying all events.
-    pub fn state(&self) -> &S {
+    pub fn state_ref(&self) -> &S {
         &self.current_state
     }
 
@@ -286,13 +286,13 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     enum Action {
         Insert,
         Replace,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct MyEvent {
         id: usize,
         value: i32,
@@ -343,7 +343,7 @@ mod tests {
         });
 
         // Verify that the current state is as expected (order matters here).
-        assert_eq!(buffer.state().data, vec![10, 20, 30, 40, 50]);
+        assert_eq!(buffer.state_ref().data, vec![10, 20, 30, 40, 50]);
 
         // Verify that a buffer swap happened and secondary buffer is cleared.
         assert_eq!(buffer.get_secondary_buffer_len(), 0);
@@ -422,7 +422,7 @@ mod tests {
         }); // Out-of-order event.
 
         // The state should reflect that the event with id=2 was applied in the correct order.
-        assert_eq!(buffer.state().data, vec![10, 20, 30]);
+        assert_eq!(buffer.state_ref().data, vec![10, 20, 30]);
     }
 
     #[test]
@@ -498,6 +498,6 @@ mod tests {
         });
 
         // Verify that the replace action was correctly applied.
-        assert_eq!(buffer.state().data, vec![10, 99, 30]);
+        assert_eq!(buffer.state_ref().data, vec![10, 99, 30]);
     }
 }

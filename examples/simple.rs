@@ -26,13 +26,13 @@ impl State<usize> for MyState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Action {
     Insert,
     Replace,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct MyEvent {
     id: usize,
     value: i32,
@@ -75,6 +75,6 @@ fn main() {
         action: Action::Replace,
     });
 
-    assert_eq!(buffer.state().data, vec![10, 100, 30]);
-    println!("Current state data: {:?}", buffer.state().data);
+    assert_eq!(buffer.state_ref().data, vec![10, 100, 30]);
+    println!("Current state data: {:?}", buffer.state_ref().data);
 }

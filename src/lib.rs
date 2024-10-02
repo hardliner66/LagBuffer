@@ -1,6 +1,11 @@
 mod double_buffered;
-
 pub use double_buffered::DoubleBufferedLagBuffer;
+
+mod double_ended;
+pub use double_ended::DoubleEndedLagBuffer;
+
+mod manual;
+pub use manual::ManualLagBuffer;
 
 /// A trait representing an event that has an associated order key of type `OrderKey`.
 ///
@@ -31,20 +36,40 @@ pub trait State<OrderKey: Ord>: Clone {
     fn apply(&mut self, event: &Self::Event);
 }
 
-pub trait LagBuffer<S: State<O>, O: Ord = usize> {
+pub trait BaseLagBuffer<S: State<O>, O: Ord = usize> {
     fn update(&mut self, event: S::Event);
-    fn state(&self) -> &S;
 }
 
-impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBuffer<S, OrderKey>
+pub trait LagBufferState<S: State<O>, O: Ord = usize>: BaseLagBuffer<S, O> {
+    fn state(&self) -> S;
+}
+pub trait LagBufferStateRef<S: State<O>, O: Ord = usize>: BaseLagBuffer<S, O> {
+    fn state_ref(&self) -> &S;
+}
+
+impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> BaseLagBuffer<S, OrderKey>
     for DoubleBufferedLagBuffer<S, SIZE, OrderKey>
 {
     fn update(&mut self, event: S::Event) {
         (self as &mut DoubleBufferedLagBuffer<S, SIZE, OrderKey>).update(event);
     }
+}
 
-    fn state(&self) -> &S {
-        (self as &DoubleBufferedLagBuffer<S, SIZE, OrderKey>).state()
+impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBufferState<S, OrderKey>
+    for DoubleBufferedLagBuffer<S, SIZE, OrderKey>
+{
+    fn state(&self) -> S {
+        (self as &DoubleBufferedLagBuffer<S, SIZE, OrderKey>)
+            .state_ref()
+            .clone()
+    }
+}
+
+impl<S: State<OrderKey>, const SIZE: usize, OrderKey: Ord> LagBufferStateRef<S, OrderKey>
+    for DoubleBufferedLagBuffer<S, SIZE, OrderKey>
+{
+    fn state_ref(&self) -> &S {
+        (self as &DoubleBufferedLagBuffer<S, SIZE, OrderKey>).state_ref()
     }
 }
 
@@ -76,12 +101,12 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     enum Action {
         Insert,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct MyEvent {
         id: usize,
         value: i32,
@@ -96,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_trait() {
-        let mut buffer: Box<dyn LagBuffer<MyState>> =
+        let mut buffer: Box<dyn LagBufferStateRef<MyState>> =
             Box::new(DoubleBufferedLagBuffer::<MyState, 4>::new(MyState::new()));
 
         // Apply 4 insert events in order.
@@ -127,6 +152,6 @@ mod tests {
         });
 
         // Verify that the current state is as expected (order matters here).
-        assert_eq!(buffer.state().data, vec![10, 20, 30, 40, 50]);
+        assert_eq!(buffer.state_ref().data, vec![10, 20, 30, 40, 50]);
     }
 }
